@@ -5,12 +5,14 @@ from config import GEMINI_API_KEY, GROQ_API_KEY, PERPLEXITY_API_KEY
 import os
 import base64
 import io
+import requests
 
 class LLMService:
     def __init__(self):
         self.gemini_client = None
         self.groq_client = None
         self.pplx_client = None
+        self.openai_client = None # For Perplexity or OpenAI-compatible
         
         # Initialize Gemini
         if GEMINI_API_KEY and not GEMINI_API_KEY.startswith("pplx"):
@@ -47,112 +49,100 @@ class LLMService:
         image.save(buffered, format="JPEG")
         return base64.b64encode(buffered.getvalue()).decode('utf-8')
 
-    def get_response(self, user_text, image=None, context_history=None, subject_context=None):
+    def _get_puter_response(self, prompt, model_name):
+        """Call Puter.com API"""
+        # Emulating the Puter.js call via REST if possible, 
+        # OR using a simplified OpenAI-compatible endpoint if we use a bridge.
+        # But since we want to be direct:
+        
+        # NOTE: Puter's REST API requires a token usually.
+        # However, for public/free models, sometimes it works with a generic session.
+        # We'll try the backend API endpoint found in research or standard OpenAI format
+        # pointing to Puter's gateway if we had one.
+        # 
+        # Research showed "puter.ai.chat()". 
+        # Let's try to hit the backend directly.
+        
+        url = "https://api.puter.com/v2/ai/chat"
+        headers = {
+            "Content-Type": "application/json",
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+            # We might need an 'Authorization' header if the user provides a PUTER_TOKEN.
+            # If not, we hope for anonymous tier or fail gracefully.
+        }
+        
+        # Puter token from env if available
+        puter_token = os.getenv("PUTER_TOKEN")
+        if puter_token:
+            headers["Authorization"] = f"Bearer {puter_token}"
+            
+        data = {
+            "model": model_name,
+            "messages": [
+                {"role": "system", "content": self.get_system_prompt()},
+                {"role": "user", "content": prompt}
+            ],
+            "stream": False
+        }
+        
+        try:
+            response = requests.post(url, json=data, headers=headers, timeout=60)
+            if response.status_code == 200:
+                result = response.json()
+                # Assuming standard OpenAI-like response or Puter specific
+                # Puter response usually: { "message": { "content": "..." } }
+                if "message" in result:
+                     return result["message"]["content"]
+                elif "choices" in result: # OpenAI format
+                     return result["choices"][0]["message"]["content"]
+                else:
+                    return f"⚠️ Unexpected response format from Puter: {result}"
+            else:
+                 return f"⚠️ API Error ({model_name}): {response.status_code} - {response.text}"
+        except Exception as e:
+            return f"❌ Connection Error: {e}"
+
+    def get_response(self, user_text, image=None, context_history=None, subject_context=None, model="gemini-1.5-flash"):
         system_prompt = self.get_system_prompt()
-        contents = []
         full_prompt = f"{system_prompt}\n\nUser: {user_text}"
         
-        # 1. Try Gemini (Prioritize for images if available/working)
-        # Note: If image is present, Perplexity CANNOT handle it.
-        # So if image is present, we skipped PPLX or try it only as fallback for text? No, valid PPLX returns error on image.
+        # --- Route based on Model Selection ---
         
-        # Strategy: 
-        # If Image: Gemini -> Groq
-        # If Text: Perplexity -> Gemini -> Groq
-        
-        if image:
-             # Logic for Vision
+        # 1. Puter Models
+        if model.startswith("gpt") or model.startswith("claude") or model.startswith("o1") or "deepseek" in model or "grok" in model:
+             # Just pass the entire prompt to Puter
+             return self._get_puter_response(user_text, model)
              
-             # A. Try Gemini
-            if self.gemini_client:
-                try:
-                    gemini_contents = [full_prompt, image]
-                    response = self.gemini_client.models.generate_content(
-                        model="gemini-1.5-flash",
-                        contents=gemini_contents
-                    )
-                    return response.text
-                except:
-                    pass
-            
-            # B. Try Groq
-            if self.groq_client:
-                try:
-                    base64_image = self._encode_image(image)
-                    messages = [
-                        {"role": "system", "content": system_prompt},
-                        {
-                            "role": "user",
-                            "content": [
-                                {"type": "text", "text": user_text},
-                                {
-                                    "type": "image_url",
-                                    "image_url": {
-                                        "url": f"data:image/jpeg;base64,{base64_image}"
-                                    }
-                                }
-                            ]
-                        }
-                    ]
-                    completion = self.groq_client.chat.completions.create(
-                        model="llama-3.2-11b-vision-preview",
-                        messages=messages,
-                        temperature=0.7,
-                        max_tokens=1024,
-                    )
-                    return completion.choices[0].message.content
-                except Exception as e:
-                    return f"❌ Error processing image with Groq: {e}"
-            
-            return "⚠️ **عذراً،** ميزة تحليل الصور تحتاج إلى Gemini (الذي انتهت حصته) أو Groq.\nيرجى إضافة مفتاح Groq لتمكين تحليل الصور."
-
-        else:
-            # Logic for Text
-            
-            # A. Try Perplexity (Best quality/Search)
-            if self.pplx_client:
-                try:
-                    messages = [
-                        {"role": "system", "content": "Be helpful and concise."},
-                        {"role": "user", "content": full_prompt}
-                    ]
-                    
-                    # Using 'sonar' which is the standard model
-                    response = self.pplx_client.chat.completions.create(
-                        model="sonar",
-                        messages=messages,
-                    )
-                    return response.choices[0].message.content
-                except Exception as e:
-                    print(f"Perplexity Error: {e}")
-                    pass
-
-            # B. Try Gemini
-            if self.gemini_client:
+        # 2. Gemini
+        if "gemini" in model:
+             if self.gemini_client:
                 try:
                     response = self.gemini_client.models.generate_content(
-                        model="gemini-1.5-flash",
+                        model=model, # e.g. gemini-1.5-flash
                         contents=[full_prompt]
                     )
                     return response.text
-                except:
-                    pass
-
-            # C. Try Groq
-            if self.groq_client:
+                except Exception as e:
+                    return f"Gemini Error: {e}"
+        
+        # 3. Groq
+        if "groq" in model:
+             if self.groq_client:
                 try:
-                    messages = [
-                        {"role": "system", "content": system_prompt},
-                        {"role": "user", "content": user_text}
-                    ]
+                    # Map generic "groq" to a specific model if needed
+                    groq_model = "llama-3.3-70b-versatile" if model == "groq" else model
+                    
                     completion = self.groq_client.chat.completions.create(
-                        model="llama-3.3-70b-versatile",
-                        messages=messages,
+                        model=groq_model,
+                        messages=[
+                            {"role": "system", "content": system_prompt},
+                            {"role": "user", "content": user_text}
+                        ],
                         temperature=0.7,
-                        max_tokens=1024,
                     )
                     return completion.choices[0].message.content
                 except Exception as e:
-                    return f"❌ Error communicating with Groq: {e}"
-        
-        return "⚠️ **تنبيه:** لم يتم العثور على أي مفتاح API صالح (Perplexity, Gemini, Groq)."
+                    return f"Groq Error: {e}"
+
+        # Default / Fallback
+        return "⚠️ النموذج المختار غير متاح حالياً أو لم يتم التعرف عليه."

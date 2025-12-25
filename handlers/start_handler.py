@@ -31,4 +31,6 @@ async def handle_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "✨ *ابدأ الآن بكتابة سؤالك أو أرسل صورة أو رسالة صوتية!*"
     )
     
-    await update.message.reply_text(welcome_message, parse_mode='Markdown')
+    
+    from utils.keyboard import get_main_menu_keyboard
+    await update.message.reply_text(welcome_message, reply_markup=get_main_menu_keyboard(), parse_mode='Markdown')

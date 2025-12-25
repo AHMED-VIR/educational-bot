@@ -29,3 +29,24 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         else:
             # المستخدم لم يشترك بعد
             await query.answer("❌ لم تنضم للقناة بعد! يرجى الانضمام أولاً.", show_alert=True)
+            
+    # --- New Model Selection Logic ---
+    elif query.data == "settings_model":
+        from utils.keyboard import get_model_keyboard # Lazy import to avoid circular dependency
+        current_model = context.user_data.get("model", "gemini-1.5-flash")
+        await query.edit_message_text(
+            text=f"🤖 **إعدادات النموذج:**\n\nالنموذج الحالي: `{current_model}`\n\nاختر من القائمة أدناه:",
+            reply_markup=get_model_keyboard(current_model),
+            parse_mode="Markdown"
+        )
+        
+    elif query.data.startswith("model:"):
+        from utils.keyboard import get_model_keyboard
+        selected_model = query.data.split(":")[1]
+        context.user_data["model"] = selected_model
+        
+        await query.edit_message_text(
+            text=f"✅ **تم تغيير النموذج بنجاح!**\n\nالنموذج الجديد: `{selected_model}`\nجاهز لاستقبال أسئلتك.",
+            reply_markup=get_model_keyboard(selected_model),
+            parse_mode="Markdown"
+        )

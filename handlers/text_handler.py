@@ -24,7 +24,8 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
     waiting_msg = await update.message.reply_text("⏳ جاري التفكير...")
     
     # الحصول على الرد من الـ AI
-    response = llm_service.get_response(user_text)
+    current_model = context.user_data.get("model", "gemini-1.5-flash")
+    response = llm_service.get_response(user_text, model=current_model)
     
     # حذف رسالة الانتظار وإرسال الرد
     await waiting_msg.delete()
