@@ -1,0 +1,4 @@
+Topics covered:
+1. Mechanics (Newton's Laws)
+2. Thermodynamics
+3. Electromagnetism
